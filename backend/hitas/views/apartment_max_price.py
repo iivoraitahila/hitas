@@ -9,12 +9,14 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.mixins import CreateModelMixin, RetrieveModelMixin
 from rest_framework.response import Response
 from rest_framework.serializers import Serializer
+from rest_framework.settings import api_settings
 from rest_framework.viewsets import ViewSet
 
 from hitas.calculations.max_prices import create_max_price_calculation
+from hitas.calculations.max_prices.max_price import fetch_apartment
 from hitas.exceptions import HitasModelNotFound
 from hitas.models import Apartment, HousingCompany
-from hitas.models.apartment import ApartmentMaximumPriceCalculation
+from hitas.models.apartment import ApartmentMaximumPriceCalculation, ApartmentWithAnnotationsMaxPrice
 
 
 class ApartmentMaximumPriceViewSet(CreateModelMixin, RetrieveModelMixin, ViewSet):
@@ -30,16 +32,36 @@ class ApartmentMaximumPriceViewSet(CreateModelMixin, RetrieveModelMixin, ViewSet
             serializer.validated_data.get("apartment_share_of_housing_company_loans_date") or timezone.now().date()
         )
 
+        apartment = fetch_apartment(kwargs["housing_company_uuid"], kwargs["apartment_uuid"], calculation_date)
+        self.validate_apartment(apartment)
+
         # Calculate max price
         max_prices = create_max_price_calculation(
-            housing_company_uuid=kwargs["housing_company_uuid"],
-            apartment_uuid=kwargs["apartment_uuid"],
+            apartment=apartment,
             calculation_date=calculation_date,
             apartment_share_of_housing_company_loans=apartment_share_of_housing_company_loans,
             apartment_share_of_housing_company_loans_date=apartment_share_of_housing_company_loans_date,
             additional_info=serializer.validated_data.get("additional_info", ""),
         )
         return Response(max_prices)
+
+    @staticmethod
+    def validate_apartment(apartment: ApartmentWithAnnotationsMaxPrice) -> None:
+        errors: list[str] = []
+        if apartment.surface_area is None:
+            errors.append("Cannot create max price calculation for an apartment without surface area.")
+        if apartment._first_sale_purchase_price is None:
+            errors.append("Cannot create max price calculation for an apartment without a first sale purchase price.")
+        if apartment._first_sale_share_of_housing_company_loans is None:
+            errors.append("Cannot create max price calculation for an apartment without a first sale loan amount.")
+
+        if apartment.completion_date is None:
+            errors.append("Cannot create max price calculation for an apartment without completion date.")
+        elif apartment.completion_date > timezone.now().date():
+            errors.append("Cannot create max price calculation for an apartment that has not been completed yet.")
+
+        if errors:
+            raise ValidationError({api_settings.NON_FIELD_ERRORS_KEY: errors})
 
     def retrieve(self, request, *args, **kwargs):
         # Verify housing company and apartment exists (so we can raise an appropriate error)

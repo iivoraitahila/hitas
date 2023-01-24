@@ -7,7 +7,7 @@ from rest_framework import status
 
 from hitas.models import Apartment
 from hitas.tests.apis.apartment_max_price.utils import create_necessary_indices
-from hitas.tests.apis.helpers import HitasAPIClient
+from hitas.tests.apis.helpers import HitasAPIClient, InvalidInput, parametrize_helper
 from hitas.tests.factories import (
     ApartmentFactory,
     HousingCompanyConstructionPriceImprovementFactory,
@@ -186,4 +186,133 @@ def test__api__apartment_max_price__missing_date(api_client: HitasAPIClient, dat
     response = api_client.post(
         reverse("hitas:maximum-price-list", args=[a.housing_company.uuid.hex, a.uuid.hex]), data=data, format="json"
     )
+    assert response.status_code == status.HTTP_200_OK, response.json()
+
+
+@pytest.mark.parametrize(
+    **parametrize_helper(
+        {
+            "No surface area": InvalidInput(
+                invalid_data={"surface_area": None},
+                fields=[
+                    {
+                        "field": "non_field_errors",
+                        "message": "Cannot create max price calculation for an apartment without surface area.",
+                    },
+                ],
+            ),
+            "No completion date": InvalidInput(
+                invalid_data={"completion_date": None},
+                fields=[
+                    {
+                        "field": "non_field_errors",
+                        "message": "Cannot create max price calculation for an apartment without completion date.",
+                    },
+                ],
+            ),
+            "Completion date in the future": InvalidInput(
+                invalid_data={"completion_date": "9999-01-01"},
+                fields=[
+                    {
+                        "field": "non_field_errors",
+                        "message": (
+                            "Cannot create max price calculation for an apartment that has not been completed yet."
+                        ),
+                    },
+                ],
+            ),
+            "No first sale": InvalidInput(
+                invalid_data={"sales": []},
+                fields=[
+                    {
+                        "field": "non_field_errors",
+                        "message": (
+                            "Cannot create max price calculation for an apartment without a first sale purchase price."
+                        ),
+                    },
+                    {
+                        "field": "non_field_errors",
+                        "message": (
+                            "Cannot create max price calculation for an apartment without a first sale loan amount."
+                        ),
+                    },
+                ],
+            ),
+        }
+    )
+)
+@pytest.mark.django_db
+def test__api__apartment_max_price__apartment_incomplete(api_client: HitasAPIClient, invalid_data, fields):
+    a: Apartment = ApartmentFactory.create(**invalid_data)
+
+    data = {
+        "calculation_date": "2022-07-05",
+        "apartment_share_of_housing_company_loans": 2500,
+        "apartment_share_of_housing_company_loans_date": "2022-07-28",
+        "additional_info": "Example",
+    }
+
+    url = reverse(
+        "hitas:maximum-price-list",
+        kwargs={
+            "housing_company_uuid": a.housing_company.uuid.hex,
+            "apartment_uuid": a.uuid.hex,
+        },
+    )
+
+    response = api_client.post(url, data=data, format="json", openapi_validate_request=False)
+    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.json()
+    assert response.json() == {
+        "error": "bad_request",
+        "fields": fields,
+        "message": "Bad request",
+        "reason": "Bad Request",
+        "status": 400,
+    }
+
+
+@pytest.mark.django_db
+def test__api__apartment_max_price__minimal_apartment_data(api_client: HitasAPIClient):
+    a: Apartment = ApartmentFactory.create(
+        state=None,
+        apartment_type=None,
+        rooms=None,
+        share_number_start=None,
+        share_number_end=None,
+        completion_date=datetime.date(2019, 11, 27),
+        street_address="foo",
+        apartment_number=1,
+        floor=None,
+        stair="A",
+        additional_work_during_construction=None,
+        loans_during_construction=None,
+        interest_during_construction_6=None,
+        interest_during_construction_14=None,
+        debt_free_purchase_price_during_construction=None,
+        notes=None,
+    )
+
+    # Create necessary indices
+    ConstructionPriceIndex2005Equal100Factory.create(month=datetime.date(2019, 11, 1), value=129.29)
+    MarketPriceIndex2005Equal100Factory.create(month=datetime.date(2019, 11, 1), value=167.9)
+    ConstructionPriceIndex2005Equal100Factory.create(month=datetime.date(2022, 7, 1), value=146.4)
+    MarketPriceIndex2005Equal100Factory.create(month=datetime.date(2022, 7, 1), value=189.1)
+    SurfaceAreaPriceCeilingFactory.create(month=datetime.date(2022, 7, 1), value=4869)
+
+    data = {
+        "calculation_date": "2022-07-05",
+        "apartment_share_of_housing_company_loans": 2500,
+        "apartment_share_of_housing_company_loans_date": "2022-07-28",
+        "additional_info": "Example",
+    }
+
+    url = reverse(
+        "hitas:maximum-price-list",
+        kwargs={
+            "housing_company_uuid": a.housing_company.uuid.hex,
+            "apartment_uuid": a.uuid.hex,
+        },
+    )
+
+    response = api_client.post(url, data=data, format="json", openapi_validate_request=False)
     assert response.status_code == status.HTTP_200_OK, response.json()

@@ -8,7 +8,6 @@ from django.db.models.expressions import RawSQL
 from django.db.models.functions import Round, TruncMonth
 from django.utils import timezone
 
-from hitas.calculations.exceptions import InvalidCalculationResultException
 from hitas.calculations.max_prices.rules_2011_onwards import Rules2011Onwards
 from hitas.calculations.max_prices.rules_pre_2011 import RulesPre2011
 from hitas.models import (
@@ -33,19 +32,12 @@ from hitas.utils import monthify
 
 
 def create_max_price_calculation(
-    housing_company_uuid: str,
-    apartment_uuid: str,
+    apartment: ApartmentWithAnnotationsMaxPrice,
     calculation_date: Optional[datetime.date],
     apartment_share_of_housing_company_loans: int,
     apartment_share_of_housing_company_loans_date: Optional[datetime.date],
     additional_info: Optional[str],
 ) -> Dict[str, Any]:
-    #
-    # Fetch apartment
-    #
-    apartment = fetch_apartment(housing_company_uuid, apartment_uuid, calculation_date)
-
-    raise_missing_value_errors(apartment)
 
     # Do the calculation
     calculation = calculate_max_price(
@@ -73,14 +65,6 @@ def create_max_price_calculation(
     calculation["confirmed_at"] = None
 
     return calculation
-
-
-def raise_missing_value_errors(apartment: ApartmentWithAnnotationsMaxPrice):
-    if apartment.completion_date is None:
-        raise InvalidCalculationResultException(error_code="missing_completion_date")
-
-    if not apartment.surface_area:
-        raise InvalidCalculationResultException(error_code="missing_surface_area")
 
 
 def calculate_max_price(
@@ -194,10 +178,14 @@ def calculate_max_price(
             "shares": {
                 "start": apartment.share_number_start,
                 "end": apartment.share_number_end,
-                "total": apartment.share_number_end - apartment.share_number_start + 1,
+                "total": (
+                    None
+                    if apartment.share_number_start is None or apartment.share_number_end is None
+                    else apartment.share_number_end - apartment.share_number_start + 1
+                ),
             },
             "rooms": apartment.rooms,
-            "type": apartment.apartment_type.value,
+            "type": None if apartment.apartment_type is None else apartment.apartment_type.value,
             "surface_area": apartment.surface_area,
             "address": {
                 "street_address": apartment.street_address,
