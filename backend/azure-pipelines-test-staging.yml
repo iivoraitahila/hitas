@@ -40,7 +40,7 @@ resources:
   - repository: hitastj-pipelines
     type: git
     # Azure DevOps project/repository
-    ref: refs/heads/ARO-1543-triggers
+    #ref: refs/heads/ARO-1543-triggers
     name: hitastj/hitastj-pipelines
 
 extends:
